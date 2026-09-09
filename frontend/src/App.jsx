@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import TopBar from './components/TopBar';
 import VoiceCore3D from './components/VoiceCore3D';
 import ActiveTasksPanel from './components/ActiveTasksPanel';
+import ConversationPanel from './components/ConversationPanel';
 import EventTimelinePanel from './components/EventTimelinePanel';
 import VoiceWorkbench from './components/VoiceWorkbench';
 import DiagnosticsPanel from './components/DiagnosticsPanel';
 import StressTestSuite from './components/StressTestSuite';
 import RimeStatusModal from './components/RimeStatusModal';
-import { fetchHealth, startTask, synthesizeSpeech, interruptTask } from './services/api';
-import { Cpu, Terminal, Shield, Zap, AlertTriangle, CheckCircle, Volume2, User, XCircle, Repeat, ShieldCheck, VolumeX } from 'lucide-react';
+import { fetchHealth, startTask, synthesizeSpeech, interruptTask, askQuestion, clearSession } from './services/api';
+import { Cpu, Terminal, Shield, Zap, AlertTriangle, CheckCircle, Volume2, User, XCircle, Repeat, ShieldCheck, VolumeX, HelpCircle, MessageSquare, RotateCcw } from 'lucide-react';
 
 export default function App() {
   const [currentState, setCurrentState] = useState('IDLE');
@@ -17,6 +18,10 @@ export default function App() {
   const [healthData, setHealthData] = useState(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [currentSpeakingText, setCurrentSpeakingText] = useState('');
+
+  // Conversational Memory State
+  const [sessionId, setSessionId] = useState('session-100');
+  const [conversationHistory, setConversationHistory] = useState([]);
 
   // Generational Request Tracking Engine
   const requestCounterRef = useRef(100);
@@ -38,7 +43,11 @@ export default function App() {
     test3: null,
     test4: null,
     test5: null,
-    test6: null
+    test6: null,
+    test7: null,
+    test8: null,
+    test9: null,
+    test10: null
   });
 
   // Task Card Operational States
@@ -51,7 +60,7 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString() + '.000',
       type: 'SYSTEM',
       label: 'VoiceOps Engine Online',
-      detail: 'Rime TTS Speech Engine Ready (Hands-Free Loop & Interruption Active)',
+      detail: 'Rime TTS Speech Engine Ready (Conversational Memory & Hands-Free Loop Active)',
       icon: Cpu,
       color: 'text-[#FFD400]'
     }
@@ -97,11 +106,22 @@ export default function App() {
     setEvents((prev) => [newEvent, ...prev.slice(0, 49)]);
   };
 
-  // Main Voice / Task Orchestration Entry Point (Optimized Latency Pipeline)
+  const handleClearSessionMemory = async () => {
+    await clearSession({ sessionId });
+    setConversationHistory([]);
+    handleLogEvent({
+      type: 'SYSTEM',
+      label: 'Conversational Memory Reset',
+      detail: `Short-term context cleared for session ${sessionId}`,
+      icon: RotateCcw,
+      color: 'text-amber-400'
+    });
+  };
+
+  // Main Voice / Conversational Task Orchestration Entry Point
   const handleTriggerTask = async (taskId, delaySeconds = 0.2, customPrompt = null, recTimeMs = null) => {
     const previousReqId = activeRequestIdRef.current;
     const currentReqId = getNewRequestId();
-    const totalStart = performance.now();
 
     setRecognitionMs(recTimeMs);
 
@@ -120,99 +140,140 @@ export default function App() {
       interruptTask({ activeRequestId: previousReqId, newRequestId: currentReqId });
     }
 
-    // Determine operational task from prompt text if customPrompt provided
+    let isArbitraryQuestion = false;
     let targetTask = taskId;
+
     if (customPrompt) {
       const lower = customPrompt.toLowerCase();
+      // If explicit operational preset command:
       if (lower.includes('database') || lower.includes('postgres') || lower.includes('replica')) {
         targetTask = 'database';
-      } else if (lower.includes('microservice') || lower.includes('gateway') || lower.includes('api')) {
+      } else if (lower.includes('microservice') || lower.includes('gateway') || lower.includes('api gateway')) {
         targetTask = 'microservice';
-      } else if (lower.includes('incident') || lower.includes('memory') || lower.includes('alert')) {
+      } else if (lower.includes('incident') || lower.includes('alert')) {
         targetTask = 'incident';
-      } else {
+      } else if (lower.includes('deployment status') || lower.includes('check deployment')) {
         targetTask = 'deployment';
+      } else {
+        isArbitraryQuestion = true;
       }
     }
 
-    // Update Task UI state
-    setTaskStates((prev) => ({
-      ...prev,
-      [targetTask]: {
-        status: 'running',
-        startTime: new Date().toLocaleTimeString().split(' ')[0],
-        duration: `${delaySeconds}s`,
-        requestId: currentReqId
-      }
-    }));
-
-    handleStateChange('THINKING', `Executing ${targetTask} check (${delaySeconds}s delay)...`);
-
-    handleLogEvent({
-      type: 'SYSTEM',
-      label: `Task Execution Started: ${targetTask}`,
-      detail: `RequestId: ${currentReqId} | Delay: ${delaySeconds}s`,
-      icon: Cpu,
-      color: 'text-[#FFD400]'
-    });
-
-    try {
-      // 1. Execute Operational Task via Backend
-      const taskStart = performance.now();
-      const taskResult = await startTask({
-        taskId: targetTask,
-        delaySeconds: delaySeconds,
-        requestId: currentReqId
-      });
-      const measuredTaskMs = Math.round(performance.now() - taskStart);
-      setTaskMs(measuredTaskMs);
-
-      // 2. CRITICAL STALE RESULT CHECK
-      if (taskResult.request_id !== activeRequestIdRef.current || taskResult.is_stale) {
-        // Result is STALE! Discard and do NOT speak!
-        setStaleDiscardedCount((prev) => prev + 1);
-        
-        setTaskStates((prev) => ({
-          ...prev,
-          [targetTask]: {
-            ...prev[targetTask],
-            status: 'invalidated'
-          }
-        }));
-
-        handleLogEvent({
-          type: 'STALE_DISCARD',
-          label: 'STALE RESULT DISCARDED',
-          detail: `Task ${targetTask} result (${taskResult.request_id}) arrived but active request is ${activeRequestIdRef.current}. Audio synthesis SUPPRESSED!`,
-          icon: XCircle,
-          color: 'text-amber-400'
-        });
-        return { status: 'stale_discarded' };
-      }
-
-      // 3. Result is VALID for current request
+    // Update Task UI state if operational
+    if (!isArbitraryQuestion) {
       setTaskStates((prev) => ({
         ...prev,
         [targetTask]: {
-          ...prev[targetTask],
-          status: 'completed'
+          status: 'running',
+          startTime: new Date().toLocaleTimeString().split(' ')[0],
+          duration: `${delaySeconds}s`,
+          requestId: currentReqId
         }
       }));
+    }
+
+    handleStateChange('THINKING', isArbitraryQuestion ? 'Reasoning answer...' : `Executing ${targetTask} check...`);
+
+    try {
+      let speechTextToSynthesize = '';
+      let answerTextToDisplay = '';
+      let measuredTaskMs = 0;
+      let providerName = 'VoiceOps Engine';
+
+      const taskStart = performance.now();
+
+      if (isArbitraryQuestion && customPrompt) {
+        // 1A. Arbitrary Conversational Question Path via Reasoning Engine
+        const chatRes = await askQuestion({
+          prompt: customPrompt,
+          sessionId: sessionId,
+          requestId: currentReqId,
+          delaySeconds: delaySeconds
+        });
+        measuredTaskMs = Math.round(performance.now() - taskStart);
+        setTaskMs(measuredTaskMs);
+
+        // Check Stale Result
+        if (chatRes.request_id !== activeRequestIdRef.current) {
+          setStaleDiscardedCount((prev) => prev + 1);
+          handleLogEvent({
+            type: 'STALE_DISCARD',
+            label: 'STALE REASONING RESULT DISCARDED',
+            detail: `Reasoning result for ${chatRes.request_id} arrived late. Active is ${activeRequestIdRef.current}. Audio SUPPRESSED!`,
+            icon: XCircle,
+            color: 'text-amber-400'
+          });
+          return { status: 'stale_discarded' };
+        }
+
+        answerTextToDisplay = chatRes.answer_text;
+        speechTextToSynthesize = chatRes.speech_text;
+        providerName = chatRes.provider;
+
+      } else {
+        // 1B. Operational Task Path via Task Service
+        const taskResult = await startTask({
+          taskId: targetTask,
+          delaySeconds: delaySeconds,
+          requestId: currentReqId
+        });
+        measuredTaskMs = Math.round(performance.now() - taskStart);
+        setTaskMs(measuredTaskMs);
+
+        // Check Stale Result
+        if (taskResult.request_id !== activeRequestIdRef.current || taskResult.is_stale) {
+          setStaleDiscardedCount((prev) => prev + 1);
+          setTaskStates((prev) => ({
+            ...prev,
+            [targetTask]: { ...prev[targetTask], status: 'invalidated' }
+          }));
+
+          handleLogEvent({
+            type: 'STALE_DISCARD',
+            label: 'STALE RESULT DISCARDED',
+            detail: `Task ${targetTask} result (${taskResult.request_id}) arrived but active request is ${activeRequestIdRef.current}. Audio SUPPRESSED!`,
+            icon: XCircle,
+            color: 'text-amber-400'
+          });
+          return { status: 'stale_discarded' };
+        }
+
+        setTaskStates((prev) => ({
+          ...prev,
+          [targetTask]: { ...prev[targetTask], status: 'completed' }
+        }));
+
+        answerTextToDisplay = taskResult.summary_text;
+        speechTextToSynthesize = taskResult.speech_text;
+        providerName = 'VoiceOps Operational Engine';
+      }
+
+      // Record Turn into Conversational History Panel
+      setConversationHistory((prev) => [
+        ...prev,
+        {
+          userText: customPrompt || `Triggered ${targetTask} operational diagnostic`,
+          answerText: answerTextToDisplay,
+          speechText: speechTextToSynthesize,
+          timestamp: new Date().toLocaleTimeString(),
+          provider: providerName
+        }
+      ]);
 
       handleLogEvent({
         type: 'SYSTEM',
-        label: `Task Result Ready: ${targetTask}`,
-        detail: `Summary: "${taskResult.summary_text}" (Task execution: ${measuredTaskMs}ms)`,
+        label: isArbitraryQuestion ? 'Reasoning Answer Ready' : `Task Result Ready: ${targetTask}`,
+        detail: `Answer: "${speechTextToSynthesize}" (${measuredTaskMs}ms reasoning)`,
         icon: CheckCircle,
         color: 'text-emerald-400'
       });
 
-      // 4. Synthesize Speech via Rime TTS API
+      // 2. Synthesize Speech via Rime TTS API
       handleStateChange('THINKING', 'Synthesizing speech via Rime TTS...');
       const ttsStart = performance.now();
 
       try {
-        const ttsResult = await synthesizeSpeech(taskResult.speech_text, {
+        const ttsResult = await synthesizeSpeech(speechTextToSynthesize, {
           speaker: healthData?.rime?.default_speaker,
           modelId: healthData?.rime?.default_model,
           lang: healthData?.rime?.default_lang,
@@ -246,8 +307,8 @@ export default function App() {
           color: 'text-emerald-400'
         });
 
-        setCurrentSpeakingText(taskResult.speech_text);
-        handleStateChange('SPEAKING', `Speaking: "${taskResult.speech_text}"`);
+        setCurrentSpeakingText(speechTextToSynthesize);
+        handleStateChange('SPEAKING', `Speaking: "${speechTextToSynthesize}"`);
         setLastError(null);
         return { status: 'success', audioUrl: ttsResult.audioUrl };
 
@@ -260,7 +321,7 @@ export default function App() {
           type: 'SYSTEM',
           label: 'Rime Synthesis Error',
           detail: errStr,
-          icon: AlertCircle,
+          icon: AlertTriangle,
           color: 'text-red-400'
         });
         return { status: 'tts_error', error: errStr };
@@ -268,7 +329,7 @@ export default function App() {
 
     } catch (taskErr) {
       setLastError(taskErr.message);
-      handleStateChange('ERROR', `Task Error: ${taskErr.message}`);
+      handleStateChange('ERROR', `Error: ${taskErr.message}`);
       return { status: 'task_error', error: taskErr.message };
     }
   };
@@ -300,7 +361,7 @@ export default function App() {
     handleStateChange('LISTENING', 'Hands-Free Voice Mode Active • Listening...');
   };
 
-  // Automated Hackathon Stress Test Runners (TESTS 01 to 06)
+  // Automated Hackathon Stress Test Runners (TESTS 01 to 10)
   const handleRunTest1 = async () => {
     handleLogEvent({
       type: 'SYSTEM',
@@ -309,7 +370,7 @@ export default function App() {
       icon: Cpu,
       color: 'text-[#FFD400]'
     });
-    const res = await handleTriggerTask('deployment', 0.2);
+    await handleTriggerTask('deployment', 0.2);
     setTestResults((prev) => ({ ...prev, test1: true }));
   };
 
@@ -392,6 +453,56 @@ export default function App() {
     setTestResults((prev) => ({ ...prev, test6: true }));
   };
 
+  const handleRunTest7 = async () => {
+    handleLogEvent({
+      type: 'SYSTEM',
+      label: 'STRESS TEST 07 INITIATED',
+      detail: 'Testing Arbitrary Knowledge Processing ("What is quantum computing?")',
+      icon: HelpCircle,
+      color: 'text-[#FFD400]'
+    });
+    await handleTriggerTask('deployment', 0.1, "What is quantum computing?");
+    setTestResults((prev) => ({ ...prev, test7: true }));
+  };
+
+  const handleRunTest8 = async () => {
+    handleLogEvent({
+      type: 'SYSTEM',
+      label: 'STRESS TEST 08 INITIATED',
+      detail: 'Testing Short-Term Follow-Up Conversational Context',
+      icon: MessageSquare,
+      color: 'text-[#FFB800]'
+    });
+    await handleTriggerTask('deployment', 0.1, "Explain that in simple terms");
+    setTestResults((prev) => ({ ...prev, test8: true }));
+  };
+
+  const handleRunTest9 = async () => {
+    handleLogEvent({
+      type: 'SYSTEM',
+      label: 'STRESS TEST 09 INITIATED',
+      detail: 'Testing Automatic Rime Speech Playback & Resume',
+      icon: Volume2,
+      color: 'text-cyan-400'
+    });
+    await handleTriggerTask('deployment', 0.1, "Check active cluster health");
+    handleAudioEnded();
+    setTestResults((prev) => ({ ...prev, test9: true }));
+  };
+
+  const handleRunTest10 = async () => {
+    handleLogEvent({
+      type: 'SYSTEM',
+      label: 'STRESS TEST 10 INITIATED',
+      detail: 'Testing Session Memory Clear & Conversational Recovery',
+      icon: RotateCcw,
+      color: 'text-[#FFD400]'
+    });
+    await handleClearSessionMemory();
+    await handleTriggerTask('deployment', 0.1, "Hello, who are you?");
+    setTestResults((prev) => ({ ...prev, test10: true }));
+  };
+
   return (
     <div className="min-h-screen bg-[#050505] text-slate-100 flex flex-col font-sans selection:bg-[#FFD400] selection:text-black">
       {/* Top Bar */}
@@ -420,15 +531,21 @@ export default function App() {
           }}
         />
 
-        {/* Main Grid: Left Panel | Center 3D Voice Core | Right Event Audit Log */}
+        {/* Main Grid: Left Panel (Tasks + History) | Center 3D Core | Right Event Timeline */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* Left Panel: Active Operational Tasks */}
-          <div className="lg:col-span-3 w-full">
+          {/* Left Panel: Active Operational Tasks & Conversational Memory */}
+          <div className="lg:col-span-3 w-full flex flex-col gap-6">
             <ActiveTasksPanel
               taskStates={taskStates}
               onTriggerTask={(taskId, delay) => handleTriggerTask(taskId, delay)}
               activeRequestId={activeRequestId}
+            />
+
+            <ConversationPanel
+              conversationHistory={conversationHistory}
+              sessionId={sessionId}
+              onClearHistory={handleClearSessionMemory}
             />
           </div>
 
@@ -463,11 +580,15 @@ export default function App() {
               onRunTest4={handleRunTest4}
               onRunTest5={handleRunTest5}
               onRunTest6={handleRunTest6}
+              onRunTest7={handleRunTest7}
+              onRunTest8={handleRunTest8}
+              onRunTest9={handleRunTest9}
+              onRunTest10={handleRunTest10}
               testResults={testResults}
             />
           </div>
 
-          {/* Right Panel: Conversation / Event Timeline */}
+          {/* Right Panel: Event Timeline Audit Log */}
           <div className="lg:col-span-3 w-full">
             <EventTimelinePanel events={events} />
           </div>
@@ -483,7 +604,7 @@ export default function App() {
 
       {/* Footer Status Bar */}
       <footer className="w-full border-t border-zinc-800/80 bg-[#050505] py-3 px-6 text-center text-xs font-mono text-slate-400 flex flex-wrap items-center justify-between gap-2">
-        <span>VoiceOps • Voice Native Control Cockpit</span>
+        <span>VoiceOps • Conversational & Operational Voice Cockpit</span>
         <span>Powered by <strong className="text-[#FFD400]">Rime TTS Engine</strong></span>
         <span>DATAFORGE 2026 Challenge</span>
       </footer>

@@ -44,3 +44,29 @@ class TTSErrorResponse(BaseModel):
     message: str
     rime_configured: bool
     details: Optional[Dict[str, Any]] = None
+
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    prompt: str = Field(..., description="User voice or text prompt/question")
+    session_id: Optional[str] = Field(default="session-default", alias="sessionId", description="Conversational session context ID")
+    request_id: Optional[str] = Field(default=None, alias="requestId", description="Tracking request ID token")
+    delay_seconds: Optional[float] = Field(default=0.0, description="Optional delay for test simulation")
+
+class ChatResponse(BaseModel):
+    answer_text: str = Field(..., description="Full text answer to display in conversation panel")
+    speech_text: str = Field(..., description="Concise TTS-optimized spoken text for Rime audio synthesis")
+    session_id: str
+    request_id: str
+    reasoning_time_ms: float
+    provider: str = Field(default="voiceops-engine", description="Name of reasoning provider used")
+    history_length: int = Field(default=0, description="Number of conversation turns stored in session context")
+
+class ClearSessionRequest(BaseModel):
+    session_id: str = Field(..., alias="sessionId", description="Session ID to clear history for")
+
+class ClearSessionResponse(BaseModel):
+    status: str
+    session_id: str
+    message: str
+

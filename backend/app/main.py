@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import health, tts, tasks
+from app.api import health, tts, tasks, chat
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -14,9 +14,16 @@ app = FastAPI(
 )
 
 # CORS Middleware setup
+allowed_origins = [
+    "*",
+    "https://voiceops-rime-frontend.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,6 +34,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api", tags=["System"])
 app.include_router(tts.router, prefix="/api", tags=["Speech"])
 app.include_router(tasks.router, prefix="/api/task", tags=["Tasks"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 
 @app.on_event("startup")
 async def startup_event():

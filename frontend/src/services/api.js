@@ -1,10 +1,26 @@
 /**
  * VoiceOps Frontend API Service
+ * Standardized API Base URL configuration for Render Production & Local Development
  */
+
+const RAW_BASE = import.meta.env.VITE_API_BASE_URL || 'https://voiceops-rime.onrender.com';
+const API_BASE_URL = RAW_BASE.replace(/\/$/, '');
+
+function getApiUrl(path) {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  
+  // Use relative URL in dev mode ONLY if VITE_API_BASE_URL is not set
+  if (import.meta.env.DEV && !import.meta.env.VITE_API_BASE_URL) {
+    return path;
+  }
+  
+  const cleanPath = path.startsWith('/') ? path : '/' + path;
+  return `${API_BASE_URL}${cleanPath}`;
+}
 
 export async function fetchHealth() {
   try {
-    const response = await fetch('/api/health');
+    const response = await fetch(getApiUrl('/api/health'));
     if (!response.ok) {
       throw new Error(`HTTP error ${response.status}`);
     }
@@ -23,7 +39,7 @@ export async function fetchHealth() {
 export async function synthesizeSpeech(text, options = {}) {
   const { speaker, modelId, lang, requestId } = options;
   
-  const response = await fetch('/api/tts', {
+  const response = await fetch(getApiUrl('/api/tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -66,7 +82,7 @@ export async function synthesizeSpeech(text, options = {}) {
 }
 
 export async function startTask({ taskId, delaySeconds = 3.0, requestId }) {
-  const response = await fetch('/api/task/start', {
+  const response = await fetch(getApiUrl('/api/task/start'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -88,7 +104,7 @@ export async function startTask({ taskId, delaySeconds = 3.0, requestId }) {
 
 export async function interruptTask({ activeRequestId, newRequestId, reason }) {
   try {
-    const response = await fetch('/api/task/interrupt', {
+    const response = await fetch(getApiUrl('/api/task/interrupt'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -102,5 +118,44 @@ export async function interruptTask({ activeRequestId, newRequestId, reason }) {
     return await response.json();
   } catch (err) {
     console.warn("Interrupt notification error:", err);
+  }
+}
+
+export async function askQuestion({ prompt, sessionId, requestId, delaySeconds = 0.0 }) {
+  const response = await fetch(getApiUrl('/api/chat/ask'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt,
+      sessionId: sessionId || 'session-default',
+      requestId: requestId || undefined,
+      delay_seconds: delaySeconds
+    })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Reasoning query failed');
+  }
+
+  return await response.json();
+}
+
+export async function clearSession({ sessionId }) {
+  try {
+    const response = await fetch(getApiUrl('/api/chat/clear'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: sessionId || 'session-default'
+      })
+    });
+    return await response.json();
+  } catch (err) {
+    console.warn("Clear session error:", err);
   }
 }

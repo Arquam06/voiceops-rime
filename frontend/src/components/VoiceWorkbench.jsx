@@ -27,10 +27,10 @@ export default function VoiceWorkbench({
   const animFrameRef = useRef(null);
 
   const quickPrompts = [
+    "What is quantum computing?",
+    "Explain DBMS normalization in simple terms.",
     "Check deployment status for microservices.",
-    "Check database replication health and slave latency.",
-    "Check API Gateway status and memory metrics.",
-    "Check active security incident INC-8921 status."
+    "Check database replication health and slave latency."
   ];
 
   // Speech Recognition Hook Integration
